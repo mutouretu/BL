@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 import db
+import market_data
 import paper_db
 
 
@@ -659,49 +660,39 @@ def refresh_tracking_price(project_id: int, symbol: str) -> dict:
         ).fetchone()
         if tracked is None:
             raise ValueError("未找到对应的当前跟踪股票。")
-        price = conn.execute(
+
+    quote = market_data.fetch_realtime_quote(normalized_symbol)
+    with db.get_connection() as conn:
+        conn.execute(
             """
-            SELECT price, source
-            FROM theory_reference_prices
-            WHERE symbol = ?
-            ORDER BY price_time DESC, id DESC LIMIT 1
+            INSERT INTO theory_reference_prices (
+                symbol, price, price_time, source, created_at
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(symbol, price_time, source) DO UPDATE SET
+                price = excluded.price,
+                created_at = excluded.created_at
             """,
-            (normalized_symbol,),
-        ).fetchone()
-        if price is None:
-            price = conn.execute(
-            """
-            SELECT close AS price, '日行情' AS source
-            FROM paper_market_daily
-            WHERE symbol = ? AND close IS NOT NULL
-            ORDER BY trade_date DESC, id DESC LIMIT 1
-            """,
-            (normalized_symbol,),
-            ).fetchone()
-        if price is None:
-            price = conn.execute(
-                """
-                SELECT price, '最近成交' AS source
-                FROM paper_fills
-                WHERE symbol = ?
-                ORDER BY fill_time DESC, id DESC LIMIT 1
-                """,
-                (normalized_symbol,),
-            ).fetchone()
-        if price is None:
-            raise ValueError("暂无本地参考价格，请先载入演示行情。")
+            (
+                quote.symbol,
+                quote.price,
+                quote.price_time,
+                quote.source,
+                now_iso(),
+            ),
+        )
         conn.execute(
             """
             UPDATE tracked_instruments
             SET reference_price = ?, updated_at = ?
             WHERE id = ?
             """,
-            (float(price["price"]), now_iso(), tracked["id"]),
+            (quote.price, now_iso(), tracked["id"]),
         )
     return {
         "symbol": normalized_symbol,
-        "price": float(price["price"]),
-        "source": price["source"],
+        "price": quote.price,
+        "price_time": quote.price_time,
+        "source": quote.source,
     }
 
 
@@ -720,16 +711,60 @@ def refresh_all_tracking_prices(project_id: int) -> dict:
     if not tracked_rows:
         raise ValueError("当前没有需要刷新价格的股票。")
 
+    symbols = [str(row["symbol"]) for row in tracked_rows]
+    quotes, quote_failures = market_data.fetch_realtime_quotes(symbols)
     updated = []
-    failed = []
-    for row in tracked_rows:
-        try:
-            updated.append(refresh_tracking_price(project_id, row["symbol"]))
-        except ValueError as exc:
-            failed.append({"symbol": row["symbol"], "message": str(exc)})
+    failed = [
+        {"symbol": symbol, "message": quote_failures[symbol]}
+        for symbol in symbols
+        if symbol in quote_failures
+    ]
+
+    with db.get_connection() as conn:
+        for symbol in symbols:
+            quote = quotes.get(symbol)
+            if quote is None:
+                continue
+            conn.execute(
+                """
+                INSERT INTO theory_reference_prices (
+                    symbol, price, price_time, source, created_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(symbol, price_time, source) DO UPDATE SET
+                    price = excluded.price,
+                    created_at = excluded.created_at
+                """,
+                (
+                    quote.symbol,
+                    quote.price,
+                    quote.price_time,
+                    quote.source,
+                    now_iso(),
+                ),
+            )
+            conn.execute(
+                """
+                UPDATE tracked_instruments
+                SET reference_price = ?, updated_at = ?
+                WHERE project_id = ? AND instrument_id = (
+                    SELECT id FROM instruments WHERE symbol = ?
+                )
+                  AND tracking_state IN ('WATCHING', 'HOLDING')
+                """,
+                (quote.price, now_iso(), project_id, symbol),
+            )
+            updated.append(
+                {
+                    "symbol": symbol,
+                    "price": quote.price,
+                    "price_time": quote.price_time,
+                    "source": quote.source,
+                }
+            )
 
     if not updated:
-        raise ValueError("全部刷新失败：当前跟踪股票均缺少本地参考行情。")
+        detail = failed[0]["message"] if failed else "行情服务暂无可用数据。"
+        raise ValueError(f"全部实时行情刷新失败：{detail}")
     return {
         "updated": updated,
         "failed": failed,

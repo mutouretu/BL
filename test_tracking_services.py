@@ -4,8 +4,10 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import db
+import market_data
 import paper_db
 import paper_services
 import stage1_fixtures
@@ -249,21 +251,50 @@ class TrackingServicesTest(unittest.TestCase):
             "万科A",
         )
         self.assertEqual(updated, {"symbol": "000002.SZ", "name": "万科A"})
-        paper_services.upsert_market_daily(
-            "2026-08-06", "000002.SZ", 7.20, 6.90, 7.08
+        quote = market_data.RealtimeQuote(
+            symbol="000002.SZ",
+            name="万科A",
+            price=7.08,
+            price_time="2026-08-06 11:20:00",
         )
-        refreshed = tracking_services.refresh_tracking_price(
-            self.project_id, "000002.SZ"
-        )
+        with patch(
+            "tracking_services.market_data.fetch_realtime_quote",
+            return_value=quote,
+        ):
+            refreshed = tracking_services.refresh_tracking_price(
+                self.project_id, "000002.SZ"
+            )
         self.assertEqual(refreshed["price"], 7.08)
-        self.assertEqual(refreshed["source"], "日行情")
+        self.assertEqual(refreshed["source"], "东方财富实时行情")
+        with db.get_connection() as conn:
+            stored_price = conn.execute(
+                """
+                SELECT price, price_time, source
+                FROM theory_reference_prices
+                WHERE symbol = ?
+                """,
+                ("000002.SZ",),
+            ).fetchone()
+        self.assertEqual(stored_price["price"], 7.08)
+        self.assertEqual(stored_price["price_time"], "2026-08-06 11:20:00")
 
-        refreshed_all = tracking_services.refresh_all_tracking_prices(
-            self.project_id
+        newer_quote = market_data.RealtimeQuote(
+            symbol="000002.SZ",
+            name="万科A",
+            price=7.12,
+            price_time="2026-08-06 11:21:00",
         )
+        with patch(
+            "tracking_services.market_data.fetch_realtime_quotes",
+            return_value=({"000002.SZ": newer_quote}, {}),
+        ):
+            refreshed_all = tracking_services.refresh_all_tracking_prices(
+                self.project_id
+            )
         self.assertEqual(refreshed_all["updated_count"], 1)
         self.assertEqual(refreshed_all["failed_count"], 0)
         self.assertEqual(refreshed_all["updated"][0]["symbol"], "000002.SZ")
+        self.assertEqual(refreshed_all["updated"][0]["price"], 7.12)
 
         tracking_services.remove_tracking(self.project_id, "000002.SZ")
         self.assertEqual(

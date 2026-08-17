@@ -326,7 +326,7 @@ def render_tracking_table(frame: pd.DataFrame, project_id: int) -> None:
             lambda result: (
                 f"已刷新 {result['updated_count']} 只股票价格。"
                 + (
-                    f"另有 {result['failed_count']} 只股票缺少本地参考行情。"
+                    f"另有 {result['failed_count']} 只股票实时行情获取失败。"
                     if result["failed_count"]
                     else ""
                 )
