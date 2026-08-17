@@ -67,6 +67,27 @@ class MarketDataTest(unittest.TestCase):
         self.assertEqual(get.call_args.kwargs["params"]["secid"], "1.600000")
 
     @patch("market_data.requests.get")
+    def test_fetch_realtime_quote_accepts_ss_as_shanghai_alias(
+        self, get: Mock
+    ) -> None:
+        get.return_value = self._response(
+            {
+                "rc": 0,
+                "data": {
+                    "f43": 10.55,
+                    "f57": "600000",
+                    "f58": "浦发银行",
+                    "f86": 1_786_952_097,
+                },
+            }
+        )
+
+        quote = market_data.fetch_realtime_quote("600000.SS")
+
+        self.assertEqual(quote.symbol, "600000.SH")
+        self.assertEqual(get.call_args.kwargs["params"]["secid"], "1.600000")
+
+    @patch("market_data.requests.get")
     def test_fetch_realtime_quote_reports_provider_failure(self, get: Mock) -> None:
         get.side_effect = requests.Timeout("timeout")
 

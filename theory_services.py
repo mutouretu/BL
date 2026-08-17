@@ -48,6 +48,10 @@ def _normalize_symbol(symbol: str) -> str:
         if value.startswith(("5", "6")):
             return f"{value}.SH"
         return f"{value}.SZ"
+    if "." in value:
+        code, exchange = value.rsplit(".", 1)
+        if exchange == "SS":
+            return f"{code}.SH"
     return value
 
 

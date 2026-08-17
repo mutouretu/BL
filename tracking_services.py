@@ -52,12 +52,17 @@ def _normalize_symbol(symbol: str) -> str:
         if normalized.startswith(("5", "6")):
             return f"{normalized}.SH"
         return f"{normalized}.SZ"
+    if "." in normalized:
+        code, exchange = normalized.rsplit(".", 1)
+        if exchange == "SS":
+            return f"{code}.SH"
     return normalized
 
 
 def _exchange(symbol: str) -> str:
     if "." in symbol:
-        return symbol.rsplit(".", 1)[1]
+        exchange = symbol.rsplit(".", 1)[1]
+        return "SH" if exchange == "SS" else exchange
     if symbol.startswith(("5", "6", "9")):
         return "SH"
     return "SZ"

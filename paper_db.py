@@ -491,6 +491,76 @@ def _create_theory_record_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(THEORY_RECORD_SCHEMA)
 
 
+def _canonicalize_symbol_aliases(conn: sqlite3.Connection) -> None:
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn.execute(
+        """
+        UPDATE instruments
+        SET symbol = substr(symbol, 1, length(symbol) - 3) || '.SH',
+            exchange = 'SH',
+            updated_at = ?
+        WHERE symbol LIKE '%.SS'
+          AND NOT EXISTS (
+              SELECT 1 FROM instruments target
+              WHERE target.symbol = substr(instruments.symbol, 1, length(instruments.symbol) - 3) || '.SH'
+          )
+        """,
+        (timestamp,),
+    )
+    for table in (
+        "paper_signals",
+        "paper_fills",
+        "paper_position_lots",
+        "theory_trade_records",
+        "theory_position_lots",
+    ):
+        conn.execute(
+            f"""
+            UPDATE {table}
+            SET symbol = substr(symbol, 1, length(symbol) - 3) || '.SH'
+            WHERE symbol LIKE '%.SS'
+            """
+        )
+    for table in ("paper_positions", "theory_positions"):
+        conn.execute(
+            f"""
+            UPDATE {table}
+            SET symbol = substr(symbol, 1, length(symbol) - 3) || '.SH'
+            WHERE symbol LIKE '%.SS'
+              AND NOT EXISTS (
+                  SELECT 1 FROM {table} target
+                  WHERE target.account_id = {table}.account_id
+                    AND target.symbol = substr({table}.symbol, 1, length({table}.symbol) - 3) || '.SH'
+              )
+            """
+        )
+    conn.execute(
+        """
+        UPDATE paper_market_daily
+        SET symbol = substr(symbol, 1, length(symbol) - 3) || '.SH'
+        WHERE symbol LIKE '%.SS'
+          AND NOT EXISTS (
+              SELECT 1 FROM paper_market_daily target
+              WHERE target.trade_date = paper_market_daily.trade_date
+                AND target.symbol = substr(paper_market_daily.symbol, 1, length(paper_market_daily.symbol) - 3) || '.SH'
+          )
+        """
+    )
+    conn.execute(
+        """
+        UPDATE theory_reference_prices
+        SET symbol = substr(symbol, 1, length(symbol) - 3) || '.SH'
+        WHERE symbol LIKE '%.SS'
+          AND NOT EXISTS (
+              SELECT 1 FROM theory_reference_prices target
+              WHERE target.price_time = theory_reference_prices.price_time
+                AND target.source = theory_reference_prices.source
+                AND target.symbol = substr(theory_reference_prices.symbol, 1, length(theory_reference_prices.symbol) - 3) || '.SH'
+          )
+        """
+    )
+
+
 MIGRATIONS: tuple[tuple[int, str, Callable[[sqlite3.Connection], None]], ...] = (
     (1, "create_paper_schema", _create_current_schema),
     (2, "remove_manual_ledger_and_migrate_shadow_tables", _migrate_legacy_shadow_schema),
@@ -499,6 +569,7 @@ MIGRATIONS: tuple[tuple[int, str, Callable[[sqlite3.Connection], None]], ...] = 
     (5, "add_pending_sell_ratio", _add_pending_sell_ratio),
     (6, "add_signal_allocation_fields", _add_signal_allocation_fields),
     (7, "create_manual_theory_record_schema", _create_theory_record_schema),
+    (8, "canonicalize_symbol_aliases", _canonicalize_symbol_aliases),
 )
 
 

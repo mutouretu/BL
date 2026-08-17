@@ -38,6 +38,8 @@ def _normalize_symbol(symbol: str) -> tuple[str, str, int]:
     code, exchange = normalized.rsplit(".", 1)
     if len(code) != 6 or not code.isdigit():
         raise MarketDataError(f"股票代码格式不正确：{normalized}")
+    exchange = {"SS": "SH"}.get(exchange, exchange)
+    normalized = f"{code}.{exchange}"
     if exchange == "SH":
         market_id = 1
     elif exchange in {"SZ", "BJ"}:

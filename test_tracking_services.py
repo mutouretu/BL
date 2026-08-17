@@ -43,7 +43,30 @@ class TrackingServicesTest(unittest.TestCase):
         self.assertTrue(
             {"instruments", "tracked_instruments", "signal_events"} <= tables
         )
-        self.assertEqual(versions, [1, 2, 3, 4, 5, 6, 7])
+        self.assertEqual(versions, [1, 2, 3, 4, 5, 6, 7, 8])
+
+    def test_symbol_alias_migration_normalizes_ss_to_sh(self) -> None:
+        with db.get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO instruments (
+                    symbol, name, exchange, created_at, updated_at
+                ) VALUES (
+                    '600619.SS', '海立股份', 'SS',
+                    '2026-08-17 09:30:00', '2026-08-17 09:30:00'
+                )
+                """
+            )
+            conn.execute("DELETE FROM schema_migrations WHERE version = 8")
+
+        paper_db.migrate()
+
+        with db.get_connection() as conn:
+            row = conn.execute(
+                "SELECT symbol, exchange FROM instruments WHERE name = '海立股份'"
+            ).fetchone()
+
+        self.assertEqual(dict(row), {"symbol": "600619.SH", "exchange": "SH"})
 
     def test_watching_expires_after_five_full_calendar_days(self) -> None:
         tracking_services.upsert_tracking(
@@ -88,7 +111,7 @@ class TrackingServicesTest(unittest.TestCase):
     def test_add_watching_normalizes_symbol_and_rejects_active_duplicate(self) -> None:
         tracking_id = tracking_services.add_watching(
             self.project_id,
-            "600000",
+            "600000.SS",
             "浦发银行",
             "2026-08-06 09:30:00",
             latest_action="BUY",

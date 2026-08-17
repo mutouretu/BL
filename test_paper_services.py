@@ -193,7 +193,7 @@ class LegacyMigrationTest(unittest.TestCase):
             {"account_id": 1, "note": "PAPER"}
         ])
         self.assertEqual(legacy_tables, [])
-        self.assertEqual([row["version"] for row in versions], [1, 2, 3, 4, 5, 6, 7])
+        self.assertEqual([row["version"] for row in versions], [1, 2, 3, 4, 5, 6, 7, 8])
         self.assertEqual(backup_account_count, 2)
 
 
