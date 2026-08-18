@@ -637,11 +637,18 @@ def history_instruments(project_id: int) -> list[dict]:
             FROM theory_trade_records r
             LEFT JOIN instruments i ON i.symbol = r.symbol
             WHERE r.project_id = ?
+
+            UNION ALL
+
+            SELECT i.symbol, i.name, 1 AS has_record
+            FROM tracking_operation_records o
+            JOIN instruments i ON i.id = o.instrument_id
+            WHERE o.project_id = ?
         ) items
         GROUP BY symbol
         ORDER BY has_record DESC, symbol
         """,
-        (project_id, project_id),
+        (project_id, project_id, project_id),
     )
     return [dict(row) for row in rows]
 
@@ -677,6 +684,75 @@ def all_trade_history(project_id: int) -> list[dict]:
             (project_id,),
         )
     ]
+
+
+def _operation_history(project_id: int, symbol: str | None = None) -> list[dict]:
+    normalized_symbol = _normalize_symbol(symbol) if symbol is not None else None
+    trade_symbol_filter = "AND r.symbol = ?" if normalized_symbol else ""
+    watch_symbol_filter = "AND i.symbol = ?" if normalized_symbol else ""
+    params: tuple = (project_id,)
+    if normalized_symbol:
+        params += (normalized_symbol,)
+    params += (project_id,)
+    if normalized_symbol:
+        params += (normalized_symbol,)
+    return [
+        dict(row)
+        for row in paper_db.rows(
+            f"""
+            SELECT *
+            FROM (
+                SELECT
+                    'TRADE' AS record_kind,
+                    r.id AS source_id,
+                    r.symbol,
+                    COALESCE(i.name, r.symbol) AS name,
+                    r.side,
+                    r.recorded_at,
+                    r.allocation_ratio,
+                    r.capital_ratio,
+                    r.reference_price,
+                    r.quantity,
+                    r.gross_amount,
+                    r.cash_change
+                FROM theory_trade_records r
+                LEFT JOIN instruments i ON i.symbol = r.symbol
+                WHERE r.project_id = ? {trade_symbol_filter}
+
+                UNION ALL
+
+                SELECT
+                    'TRACKING' AS record_kind,
+                    o.id AS source_id,
+                    i.symbol,
+                    i.name,
+                    o.action AS side,
+                    o.occurred_at AS recorded_at,
+                    NULL AS allocation_ratio,
+                    NULL AS capital_ratio,
+                    NULL AS reference_price,
+                    NULL AS quantity,
+                    NULL AS gross_amount,
+                    NULL AS cash_change
+                FROM tracking_operation_records o
+                JOIN instruments i ON i.id = o.instrument_id
+                WHERE o.project_id = ? {watch_symbol_filter}
+            ) operations
+            ORDER BY recorded_at DESC,
+                     CASE record_kind WHEN 'TRADE' THEN 1 ELSE 0 END DESC,
+                     source_id DESC
+            """,
+            params,
+        )
+    ]
+
+
+def operation_history(project_id: int, symbol: str) -> list[dict]:
+    return _operation_history(project_id, symbol)
+
+
+def all_operation_history(project_id: int) -> list[dict]:
+    return _operation_history(project_id)
 
 
 def available_months(project_id: int) -> list[str]:

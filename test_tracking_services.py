@@ -43,7 +43,7 @@ class TrackingServicesTest(unittest.TestCase):
         self.assertTrue(
             {"instruments", "tracked_instruments", "signal_events"} <= tables
         )
-        self.assertEqual(versions, [1, 2, 3, 4, 5, 6, 7, 8])
+        self.assertEqual(versions, [1, 2, 3, 4, 5, 6, 7, 8, 9])
 
     def test_symbol_alias_migration_normalizes_ss_to_sh(self) -> None:
         with db.get_connection() as conn:
@@ -127,6 +127,24 @@ class TrackingServicesTest(unittest.TestCase):
         self.assertGreater(tracking_id, 0)
         self.assertEqual(rows[0]["symbol"], "600000.SH")
         self.assertEqual(rows[0]["latest_action"], "BUY")
+        with db.get_connection() as conn:
+            operation = conn.execute(
+                """
+                SELECT o.action, o.occurred_at, o.operator
+                FROM tracking_operation_records o
+                JOIN instruments i ON i.id = o.instrument_id
+                WHERE o.project_id = ? AND i.symbol = ?
+                """,
+                (self.project_id, "600000.SH"),
+            ).fetchone()
+        self.assertEqual(
+            dict(operation),
+            {
+                "action": "WATCH",
+                "occurred_at": "2026-08-06 09:30:00",
+                "operator": "手工加入",
+            },
+        )
 
         with self.assertRaisesRegex(ValueError, "已在观察中"):
             tracking_services.add_watching(

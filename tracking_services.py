@@ -172,11 +172,12 @@ def upsert_tracking(
         )
         existing = conn.execute(
             """
-            SELECT id FROM tracked_instruments
+            SELECT id, tracking_state FROM tracked_instruments
             WHERE project_id = ? AND instrument_id = ?
             """,
             (project_id, instrument_id),
         ).fetchone()
+        changed_at = now_iso()
         values = (
             state,
             recommended_text,
@@ -191,7 +192,11 @@ def upsert_tracking(
             peak_hint.strip(),
             status,
             raw_text.strip(),
-            now_iso(),
+            changed_at,
+        )
+        should_record_watch = state == "WATCHING" and (
+            existing is None
+            or existing["tracking_state"] not in {"WATCHING", "HOLDING"}
         )
         if existing is not None:
             conn.execute(
@@ -206,20 +211,50 @@ def upsert_tracking(
                 """,
                 values + (existing["id"],),
             )
-            return int(existing["id"])
-        cursor = conn.execute(
-            """
-            INSERT INTO tracked_instruments (
-                project_id, instrument_id, tracking_state, recommended_at,
-                watch_expires_at, source_recommendation_id, latest_action,
-                latest_signal_at, target_position, reference_price,
-                predicted_low, predicted_high, peak_hint, processing_status,
-                raw_text, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (project_id, instrument_id) + values[:-1] + (values[-1], values[-1]),
-        )
-        return int(cursor.lastrowid)
+            tracking_id = int(existing["id"])
+        else:
+            cursor = conn.execute(
+                """
+                INSERT INTO tracked_instruments (
+                    project_id, instrument_id, tracking_state, recommended_at,
+                    watch_expires_at, source_recommendation_id, latest_action,
+                    latest_signal_at, target_position, reference_price,
+                    predicted_low, predicted_high, peak_hint, processing_status,
+                    raw_text, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (project_id, instrument_id)
+                + values[:-1]
+                + (values[-1], values[-1]),
+            )
+            tracking_id = int(cursor.lastrowid)
+        if should_record_watch:
+            source_part = source_recommendation_id or (
+                f"TRACKING-{tracking_id}-{recommended_text}"
+            )
+            operator = (
+                "手工加入"
+                if source_recommendation_id
+                and source_recommendation_id.startswith("UI-")
+                else "系统记录"
+            )
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO tracking_operation_records (
+                    project_id, instrument_id, action, occurred_at,
+                    operator, source_key, created_at
+                ) VALUES (?, ?, 'WATCH', ?, ?, ?, ?)
+                """,
+                (
+                    project_id,
+                    instrument_id,
+                    recommended_text,
+                    operator,
+                    f"{project_id}:{source_part}",
+                    changed_at,
+                ),
+            )
+        return tracking_id
 
 
 def add_watching(

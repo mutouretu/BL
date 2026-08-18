@@ -309,6 +309,26 @@ CREATE INDEX IF NOT EXISTS idx_signal_events_project_instrument_time
     ON signal_events(project_id, instrument_id, occurred_at);
 """
 
+TRACKING_OPERATION_SCHEMA = """
+CREATE TABLE IF NOT EXISTS tracking_operation_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL,
+    instrument_id INTEGER NOT NULL,
+    action TEXT NOT NULL CHECK (action = 'WATCH'),
+    occurred_at TEXT NOT NULL,
+    operator TEXT NOT NULL DEFAULT '手工加入',
+    source_key TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES paper_projects(id),
+    FOREIGN KEY (instrument_id) REFERENCES instruments(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tracking_operations_project_time
+    ON tracking_operation_records(project_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_tracking_operations_instrument_time
+    ON tracking_operation_records(instrument_id, occurred_at);
+"""
+
 THEORY_RECORD_SCHEMA = """
 CREATE TABLE IF NOT EXISTS theory_accounts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -561,6 +581,22 @@ def _canonicalize_symbol_aliases(conn: sqlite3.Connection) -> None:
     )
 
 
+def _create_tracking_operation_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(TRACKING_OPERATION_SCHEMA)
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO tracking_operation_records (
+            project_id, instrument_id, action, occurred_at,
+            operator, source_key, created_at
+        )
+        SELECT
+            project_id, instrument_id, 'WATCH', recommended_at,
+            '系统补录', 'BACKFILL-TRACKING-' || id, created_at
+        FROM tracked_instruments
+        """
+    )
+
+
 MIGRATIONS: tuple[tuple[int, str, Callable[[sqlite3.Connection], None]], ...] = (
     (1, "create_paper_schema", _create_current_schema),
     (2, "remove_manual_ledger_and_migrate_shadow_tables", _migrate_legacy_shadow_schema),
@@ -570,6 +606,7 @@ MIGRATIONS: tuple[tuple[int, str, Callable[[sqlite3.Connection], None]], ...] = 
     (6, "add_signal_allocation_fields", _add_signal_allocation_fields),
     (7, "create_manual_theory_record_schema", _create_theory_record_schema),
     (8, "canonicalize_symbol_aliases", _canonicalize_symbol_aliases),
+    (9, "create_tracking_operation_records", _create_tracking_operation_schema),
 )
 
 

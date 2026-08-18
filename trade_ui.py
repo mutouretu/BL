@@ -608,8 +608,8 @@ def daily_recommendations_page() -> None:
 def operation_history_page() -> None:
     project_id, _ = ensure_demo()
     st.markdown(
-        '<div class="beili-note">查看全部股票或按股票筛选用户手工记录的每一笔理论买入和卖出，'
-        "用于复核当时选择的比例、手工成交价格和理论资金占用。</div>",
+        '<div class="beili-note">查看全部股票或按股票筛选加入观察、理论买入和卖出记录，'
+        "用于复核每只股票从观察到交易的完整操作过程。</div>",
         unsafe_allow_html=True,
     )
     instrument_rows = theory_services.history_instruments(project_id)
@@ -646,11 +646,11 @@ def operation_history_page() -> None:
     if show_all:
         stock_name = "完整操作记录"
         heading_label = "全部股票"
-        trades = theory_services.all_trade_history(project_id)
+        operations = theory_services.all_operation_history(project_id)
     else:
         stock_name = stock_options[selected_symbol]
         heading_label = selected_symbol
-        trades = theory_services.trade_history(project_id, selected_symbol)
+        operations = theory_services.operation_history(project_id, selected_symbol)
     st.markdown(
         '<div class="beili-book-heading">'
         f'<span class="beili-book-badge paper">{heading_label}</span>'
@@ -659,12 +659,21 @@ def operation_history_page() -> None:
     )
 
     rows = []
-    for row in trades:
+    action_text = {"WATCH": "观察", "BUY": "买入", "SELL": "卖出"}
+    for row in operations:
         item = {
             "记录时间": row["recorded_at"],
-            "操作": "买入" if row["side"] == "BUY" else "卖出",
-            "买卖比例": row["allocation_ratio"] * 100,
-            "总仓占比": row["capital_ratio"] * 100,
+            "操作": action_text.get(row["side"], row["side"]),
+            "买卖比例": (
+                row["allocation_ratio"] * 100
+                if row["allocation_ratio"] is not None
+                else None
+            ),
+            "总仓占比": (
+                row["capital_ratio"] * 100
+                if row["capital_ratio"] is not None
+                else None
+            ),
             "成交价格": row["reference_price"],
             "理论数量": row["quantity"],
             "理论金额": row["gross_amount"],
@@ -679,9 +688,9 @@ def operation_history_page() -> None:
         rows.append(item)
     if not rows:
         st.info(
-            "当前暂无理论操作记录。"
+            "当前暂无操作记录。"
             if show_all
-            else f"{selected_symbol} · {stock_name} 暂无理论操作记录。"
+            else f"{selected_symbol} · {stock_name} 暂无操作记录。"
         )
         return
 

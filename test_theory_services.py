@@ -60,6 +60,34 @@ class TheoryServicesTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "仍有理论持仓"):
             tracking_services.archive_tracking(self.project_id, "300377.SZ")
 
+    def test_operation_history_includes_watch_with_empty_trade_details(self) -> None:
+        history = theory_services.operation_history(
+            self.project_id, "300377.SZ"
+        )
+
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["side"], "WATCH")
+        self.assertEqual(history[0]["recorded_at"], "2026-08-03 09:30:00")
+        for field in (
+            "allocation_ratio",
+            "capital_ratio",
+            "reference_price",
+            "quantity",
+            "gross_amount",
+            "cash_change",
+        ):
+            self.assertIsNone(history[0][field])
+
+        theory_services.create_record(
+            self.project_id,
+            "300377.SZ",
+            "BUY",
+            0.10,
+            recorded_at="2026-08-03 10:00:00",
+        )
+        combined = theory_services.all_operation_history(self.project_id)
+        self.assertEqual([row["side"] for row in combined], ["BUY", "WATCH"])
+
     def test_manual_price_is_used_for_preview_and_record(self) -> None:
         preview = theory_services.preview_record(
             self.project_id,
