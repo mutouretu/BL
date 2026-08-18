@@ -88,6 +88,65 @@ class TheoryServicesTest(unittest.TestCase):
         combined = theory_services.all_operation_history(self.project_id)
         self.assertEqual([row["side"] for row in combined], ["BUY", "WATCH"])
 
+    def test_operation_history_searches_by_symbol_and_name(self) -> None:
+        tracking_services.add_watching(
+            self.project_id,
+            "600000.SH",
+            "浦发银行",
+            "2026-08-04 09:30:00",
+        )
+
+        by_name = theory_services.paged_operation_history(
+            self.project_id, query="浦发"
+        )
+        by_alias = theory_services.paged_operation_history(
+            self.project_id, query="600000.SS"
+        )
+
+        self.assertEqual(by_name["total_count"], 1)
+        self.assertEqual(by_name["symbol_count"], 1)
+        self.assertEqual(by_name["matched_symbol"], "600000.SH")
+        self.assertEqual(by_alias["rows"][0]["name"], "浦发银行")
+
+    def test_operation_history_is_paged_at_requested_size(self) -> None:
+        with db.get_connection() as conn:
+            instrument_id = int(
+                conn.execute(
+                    "SELECT id FROM instruments WHERE symbol = '300377.SZ'"
+                ).fetchone()["id"]
+            )
+            conn.executemany(
+                """
+                INSERT INTO tracking_operation_records (
+                    project_id, instrument_id, action, occurred_at,
+                    operator, source_key, created_at
+                ) VALUES (?, ?, 'WATCH', ?, '测试', ?, ?)
+                """,
+                [
+                    (
+                        self.project_id,
+                        instrument_id,
+                        f"2026-08-04 10:{index:02d}:00",
+                        f"PAGE-TEST-{index}",
+                        f"2026-08-04 10:{index:02d}:00",
+                    )
+                    for index in range(54)
+                ],
+            )
+
+        first_page = theory_services.paged_operation_history(
+            self.project_id, page=1, page_size=50
+        )
+        last_page = theory_services.paged_operation_history(
+            self.project_id, page=99, page_size=50
+        )
+
+        self.assertEqual(first_page["total_count"], 55)
+        self.assertEqual(first_page["page_count"], 2)
+        self.assertEqual(len(first_page["rows"]), 50)
+        self.assertEqual(last_page["page"], 2)
+        self.assertEqual(len(last_page["rows"]), 5)
+
     def test_manual_price_is_used_for_preview_and_record(self) -> None:
         preview = theory_services.preview_record(
             self.project_id,

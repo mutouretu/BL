@@ -755,6 +755,120 @@ def all_operation_history(project_id: int) -> list[dict]:
     return _operation_history(project_id)
 
 
+def paged_operation_history(
+    project_id: int,
+    *,
+    query: str = "",
+    page: int = 1,
+    page_size: int = 50,
+) -> dict:
+    """Search and page the combined watch and trade operation history."""
+    paper_db.migrate()
+    if page < 1:
+        raise ValueError("页码必须大于等于 1。")
+    if page_size < 1:
+        raise ValueError("每页条数必须大于等于 1。")
+
+    search_text = query.strip()
+    if search_text.isdigit() and len(search_text) == 6:
+        search_text = _normalize_symbol(search_text)
+    elif search_text.upper().endswith(".SS"):
+        search_text = f"{search_text[:-3]}.SH"
+    escaped = (
+        search_text.replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+    pattern = f"%{escaped}%"
+    operation_cte = """
+        WITH operations AS (
+            SELECT
+                'TRADE' AS record_kind,
+                r.id AS source_id,
+                r.symbol,
+                COALESCE(i.name, r.symbol) AS name,
+                r.side,
+                r.recorded_at,
+                r.allocation_ratio,
+                r.capital_ratio,
+                r.reference_price,
+                r.quantity,
+                r.gross_amount,
+                r.cash_change
+            FROM theory_trade_records r
+            LEFT JOIN instruments i ON i.symbol = r.symbol
+            WHERE r.project_id = ?
+
+            UNION ALL
+
+            SELECT
+                'TRACKING' AS record_kind,
+                o.id AS source_id,
+                i.symbol,
+                i.name,
+                o.action AS side,
+                o.occurred_at AS recorded_at,
+                NULL AS allocation_ratio,
+                NULL AS capital_ratio,
+                NULL AS reference_price,
+                NULL AS quantity,
+                NULL AS gross_amount,
+                NULL AS cash_change
+            FROM tracking_operation_records o
+            JOIN instruments i ON i.id = o.instrument_id
+            WHERE o.project_id = ?
+        ),
+        filtered AS (
+            SELECT *
+            FROM operations
+            WHERE ? = ''
+               OR UPPER(symbol) LIKE UPPER(?) ESCAPE '\\'
+               OR name LIKE ? ESCAPE '\\'
+        )
+    """
+    base_params = (project_id, project_id, search_text, pattern, pattern)
+    with db.get_connection() as conn:
+        summary = conn.execute(
+            operation_cte
+            + """
+            SELECT
+                COUNT(*) AS total_count,
+                COUNT(DISTINCT symbol) AS symbol_count,
+                MIN(symbol) AS matched_symbol,
+                MIN(name) AS matched_name
+            FROM filtered
+            """,
+            base_params,
+        ).fetchone()
+        total_count = int(summary["total_count"])
+        page_count = math.ceil(total_count / page_size) if total_count else 0
+        current_page = min(page, page_count) if page_count else 1
+        offset = (current_page - 1) * page_size
+        rows = conn.execute(
+            operation_cte
+            + """
+            SELECT *
+            FROM filtered
+            ORDER BY recorded_at DESC,
+                     CASE record_kind WHEN 'TRADE' THEN 1 ELSE 0 END DESC,
+                     source_id DESC
+            LIMIT ? OFFSET ?
+            """,
+            base_params + (page_size, offset),
+        ).fetchall()
+    return {
+        "rows": [dict(row) for row in rows],
+        "query": search_text,
+        "page": current_page,
+        "page_size": page_size,
+        "page_count": page_count,
+        "total_count": total_count,
+        "symbol_count": int(summary["symbol_count"]),
+        "matched_symbol": summary["matched_symbol"],
+        "matched_name": summary["matched_name"],
+    }
+
+
 def available_months(project_id: int) -> list[str]:
     rows = paper_db.rows(
         """

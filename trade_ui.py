@@ -101,6 +101,14 @@ def _pnl_ratio_text(value: object) -> str:
     return f'<span style="color:{color};font-weight:700;">{ratio:+.1%}</span>'
 
 
+def _reset_operation_history_page() -> None:
+    st.session_state["operation_history_page_number"] = 1
+
+
+def _set_operation_history_page(page: int) -> None:
+    st.session_state["operation_history_page_number"] = page
+
+
 def render_recommendation_table(frame: pd.DataFrame) -> None:
     headers = [
         "股票代码",
@@ -608,53 +616,53 @@ def daily_recommendations_page() -> None:
 def operation_history_page() -> None:
     project_id, _ = ensure_demo()
     st.markdown(
-        '<div class="beili-note">查看全部股票或按股票筛选加入观察、理论买入和卖出记录，'
+        '<div class="beili-note">通过股票代码或名称搜索加入观察、理论买入和卖出记录，'
         "用于复核每只股票从观察到交易的完整操作过程。</div>",
         unsafe_allow_html=True,
     )
-    instrument_rows = theory_services.history_instruments(project_id)
-    stock_options = {row["symbol"]: row["name"] for row in instrument_rows}
-    if not stock_options:
-        st.info("当前还没有可查看的股票，请先在“当前跟踪”中添加观察股。")
-        return
-
-    all_stocks = "__ALL_STOCKS__"
-    requested_symbol = st.session_state.get("operation_history_symbol")
+    requested_symbol = st.session_state.pop("operation_history_symbol", None)
     legacy_symbol = st.session_state.pop("signal_history_symbol", None)
-    if (
-        requested_symbol not in stock_options
-        and requested_symbol != all_stocks
-        and legacy_symbol in stock_options
-    ):
-        requested_symbol = legacy_symbol
-    if requested_symbol not in stock_options and requested_symbol != all_stocks:
-        requested_symbol = all_stocks
-    st.session_state["operation_history_symbol"] = requested_symbol
+    navigation_query = requested_symbol or legacy_symbol
+    if navigation_query:
+        st.session_state["operation_history_query"] = navigation_query
+        st.session_state["operation_history_page_number"] = 1
+    st.session_state.setdefault("operation_history_query", "")
+    st.session_state.setdefault("operation_history_page_number", 1)
 
-    selected_symbol = st.selectbox(
-        "选择股票",
-        [all_stocks, *stock_options],
-        format_func=lambda symbol: (
-            "全部股票"
-            if symbol == all_stocks
-            else f"{symbol} · {stock_options[symbol]}"
-        ),
-        key="operation_history_symbol",
-        width=360,
+    search_query = st.text_input(
+        "搜索股票",
+        placeholder="输入股票代码或名称，留空显示全部",
+        icon=":material/search:",
+        key="operation_history_query",
+        on_change=_reset_operation_history_page,
+        persist_state="session",
+        width=480,
     )
-    show_all = selected_symbol == all_stocks
-    if show_all:
+    page_size = 50
+    result = theory_services.paged_operation_history(
+        project_id,
+        query=search_query or "",
+        page=st.session_state["operation_history_page_number"],
+        page_size=page_size,
+    )
+    st.session_state["operation_history_page_number"] = result["page"]
+    operations = result["rows"]
+    query_is_empty = not (search_query or "").strip()
+    show_stock_columns = query_is_empty or result["symbol_count"] != 1
+
+    if query_is_empty:
         stock_name = "完整操作记录"
         heading_label = "全部股票"
-        operations = theory_services.all_operation_history(project_id)
+    elif result["symbol_count"] == 1:
+        stock_name = result["matched_name"]
+        heading_label = result["matched_symbol"]
     else:
-        stock_name = stock_options[selected_symbol]
-        heading_label = selected_symbol
-        operations = theory_services.operation_history(project_id, selected_symbol)
+        stock_name = f'共匹配 {result["symbol_count"]} 只股票'
+        heading_label = "搜索结果"
     st.markdown(
         '<div class="beili-book-heading">'
-        f'<span class="beili-book-badge paper">{heading_label}</span>'
-        f"<span>{html.escape(stock_name)}</span></div>",
+        f'<span class="beili-book-badge paper">{html.escape(str(heading_label))}</span>'
+        f"<span>{html.escape(str(stock_name))}</span></div>",
         unsafe_allow_html=True,
     )
 
@@ -679,7 +687,7 @@ def operation_history_page() -> None:
             "理论金额": row["gross_amount"],
             "资金变动": row["cash_change"],
         }
-        if show_all:
+        if show_stock_columns:
             item = {
                 "股票代码": row["symbol"],
                 "股票名称": row["name"],
@@ -687,11 +695,10 @@ def operation_history_page() -> None:
             }
         rows.append(item)
     if not rows:
-        st.info(
-            "当前暂无操作记录。"
-            if show_all
-            else f"{selected_symbol} · {stock_name} 暂无操作记录。"
-        )
+        if query_is_empty:
+            st.info("当前暂无操作记录，请先在“当前跟踪”中添加观察股。")
+        else:
+            st.info(f'没有找到与“{search_query.strip()}”匹配的操作记录。')
         return
 
     frame = pd.DataFrame(rows)
@@ -706,7 +713,7 @@ def operation_history_page() -> None:
         "理论金额": st.column_config.NumberColumn(format="¥ %.2f", width="medium"),
         "资金变动": st.column_config.NumberColumn(format="¥ %.2f", width="medium"),
     }
-    if show_all:
+    if show_stock_columns:
         column_config = {
             "股票代码": st.column_config.TextColumn(width="medium", pinned=True),
             "股票名称": st.column_config.TextColumn(width="small"),
@@ -718,10 +725,55 @@ def operation_history_page() -> None:
         hide_index=True,
         column_config=column_config,
     )
+    first_record = (result["page"] - 1) * page_size + 1
+    last_record = first_record + len(frame) - 1
     st.caption(
-        f"当前显示{'全部股票' if show_all else selected_symbol}的 {len(frame)} 笔操作"
-        " · 按记录时间倒序排列"
+        f"当前显示第 {first_record}–{last_record} 条 · 共 {result['total_count']} 条"
+        " · 按记录时间倒序排列 · 每页 50 条"
     )
+    if result["page_count"] > 1:
+        page_columns = st.columns([1, 1, 2, 1, 1], vertical_alignment="center")
+        page_columns[0].button(
+            "首页",
+            icon=":material/first_page:",
+            disabled=result["page"] == 1,
+            key="operation_history_first_page",
+            on_click=_set_operation_history_page,
+            args=(1,),
+            width="stretch",
+        )
+        page_columns[1].button(
+            "上一页",
+            icon=":material/chevron_left:",
+            disabled=result["page"] == 1,
+            key="operation_history_previous_page",
+            on_click=_set_operation_history_page,
+            args=(result["page"] - 1,),
+            width="stretch",
+        )
+        page_columns[2].markdown(
+            f"**第 {result['page']} / {result['page_count']} 页**"
+        )
+        page_columns[3].button(
+            "下一页",
+            icon=":material/chevron_right:",
+            icon_position="right",
+            disabled=result["page"] == result["page_count"],
+            key="operation_history_next_page",
+            on_click=_set_operation_history_page,
+            args=(result["page"] + 1,),
+            width="stretch",
+        )
+        page_columns[4].button(
+            "末页",
+            icon=":material/last_page:",
+            icon_position="right",
+            disabled=result["page"] == result["page_count"],
+            key="operation_history_last_page",
+            on_click=_set_operation_history_page,
+            args=(result["page_count"],),
+            width="stretch",
+        )
 
 
 def signal_history_page() -> None:
