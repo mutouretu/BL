@@ -36,6 +36,10 @@ TRACKING_STATUS_TEXT = {
     "SIGNALLED": "已转信号",
 }
 
+MARKET_UP_COLOR = "#FCA5A5"
+MARKET_DOWN_COLOR = "#86EFAC"
+MARKET_FLAT_COLOR = "#B6BEC9"
+
 SIGNAL_STATUS_TEXT = {
     "RECORDED": "仅记录",
     "PENDING_RULE": "待规则判断",
@@ -88,7 +92,12 @@ def _pnl_ratio_text(value: object) -> str:
     if value is None or pd.isna(value):
         return "-"
     ratio = float(value)
-    color = "#86EFAC" if ratio > 0 else "#FDA4AF" if ratio < 0 else "#B6BEC9"
+    if ratio > 0:
+        color = MARKET_UP_COLOR
+    elif ratio < 0:
+        color = MARKET_DOWN_COLOR
+    else:
+        color = MARKET_FLAT_COLOR
     return f'<span style="color:{color};font-weight:700;">{ratio:+.1%}</span>'
 
 
@@ -960,10 +969,10 @@ def trade_profit_style(value: object) -> str:
     except (TypeError, ValueError):
         return ""
     if numeric > 0:
-        return "color: #86EFAC; font-weight: 720;"
+        return f"color: {MARKET_UP_COLOR}; font-weight: 720;"
     if numeric < 0:
-        return "color: #FDA4AF; font-weight: 720;"
-    return "color: #B6BEC9;"
+        return f"color: {MARKET_DOWN_COLOR}; font-weight: 720;"
+    return f"color: {MARKET_FLAT_COLOR};"
 
 
 def monthly_trade_statistics_page() -> None:
