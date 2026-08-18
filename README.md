@@ -41,10 +41,21 @@ http://localhost:8521
 
 进入“导入与样例”，点击“载入理论交易演示数据”可重复装载样本；相同样本不会重复记账。
 
+## 调整理论总资金
+
+已有理论记录需要整体放大时，使用脚本按比例缩放账户、历史交易、现金流水、当前持仓和持仓批次。脚本默认只预览，不写数据库；确认后加 `--apply` 执行。
+
+```bash
+python scripts/resize_theory_capital.py --target-cash 10000000
+python scripts/resize_theory_capital.py --target-cash 10000000 --apply
+```
+
+在服务器执行前建议先停服务；脚本默认会生成数据库备份文件。
+
 ## 测试
 
 ```bash
 python -m unittest discover -v
 ```
 
-测试覆盖理论买入、理论卖出、T+1、月度统计、演示数据幂等，以及原有数据库迁移兼容性。
+测试覆盖理论买入、理论卖出、T+1、月度统计、理论资金缩放、演示数据幂等，以及原有数据库迁移兼容性。
