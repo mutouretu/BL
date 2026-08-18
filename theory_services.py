@@ -9,7 +9,7 @@ import paper_db
 
 
 DEFAULT_INITIAL_CASH = 100_000.0
-BUY_RATIOS = {0.10, 0.40, 0.50}
+BUY_RATIOS = {0.10, 0.40, 0.50, 1.00}
 SELL_RATIOS = {0.50, 1.00}
 
 
@@ -235,7 +235,7 @@ def _preview_with_connection(
     normalized_side = side.strip().upper()
     ratio = float(allocation_ratio)
     if normalized_side == "BUY" and ratio not in BUY_RATIOS:
-        raise ValueError("理论买入比例仅支持剩余现金的 10%、40% 或 50%。")
+        raise ValueError("理论买入比例仅支持剩余现金的 10%、40%、50% 或 100%。")
     if normalized_side == "SELL" and ratio not in SELL_RATIOS:
         raise ValueError("理论卖出比例仅支持当前持仓的 50% 或 100%。")
     if normalized_side not in {"BUY", "SELL"}:

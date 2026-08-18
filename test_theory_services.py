@@ -41,6 +41,12 @@ class TheoryServicesTest(unittest.TestCase):
         self.assertEqual(preview.quantity, 1000)
         self.assertEqual(preview.gross_amount, 10_000)
         self.assertEqual(preview.capital_ratio, 0.10)
+        full_preview = theory_services.preview_record(
+            self.project_id, "300377.SZ", "BUY", 1.00
+        )
+        self.assertEqual(full_preview.quantity, 10_000)
+        self.assertEqual(full_preview.gross_amount, 100_000)
+        self.assertEqual(full_preview.capital_ratio, 1.00)
 
         record_id = theory_services.create_record(
             self.project_id,

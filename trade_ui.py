@@ -193,7 +193,7 @@ def render_buy_dialog(
     st.caption(f"{symbol} · {name} · 按账户剩余现金计算")
     buy_ratio = st.segmented_control(
         "买入比例",
-        options=(0.10, 0.40, 0.50),
+        options=(0.10, 0.40, 0.50, 1.00),
         default=None,
         format_func=lambda value: f"{value:.0%}",
         key=f"tracking_buy_ratio_{symbol}",

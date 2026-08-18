@@ -250,7 +250,7 @@ CREATE TABLE IF NOT EXISTS tracked_instruments (
     latest_signal_at TEXT,
     target_position REAL,
     pending_cash_ratio REAL CHECK (
-        pending_cash_ratio IS NULL OR pending_cash_ratio IN (0.10, 0.40, 0.50)
+        pending_cash_ratio IS NULL OR pending_cash_ratio IN (0.10, 0.40, 0.50, 1.00)
     ),
     pending_sell_ratio REAL CHECK (
         pending_sell_ratio IS NULL OR pending_sell_ratio IN (0.50, 1.00)
@@ -469,7 +469,7 @@ def _add_pending_cash_ratio(conn: sqlite3.Connection) -> None:
             """
             ALTER TABLE tracked_instruments
             ADD COLUMN pending_cash_ratio REAL CHECK (
-                pending_cash_ratio IS NULL OR pending_cash_ratio IN (0.10, 0.40, 0.50)
+                pending_cash_ratio IS NULL OR pending_cash_ratio IN (0.10, 0.40, 0.50, 1.00)
             )
             """
         )
@@ -597,6 +597,75 @@ def _create_tracking_operation_schema(conn: sqlite3.Connection) -> None:
     )
 
 
+def _allow_full_pending_cash_ratio(conn: sqlite3.Connection) -> None:
+    schema_row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tracked_instruments'"
+    ).fetchone()
+    normalized_schema = "".join(str(schema_row["sql"]).split())
+    if "pending_cash_ratioIN(0.10,0.40,0.50,1.00)" in normalized_schema:
+        return
+    conn.executescript(
+        """
+        ALTER TABLE tracked_instruments RENAME TO tracked_instruments_pre_buy_100;
+
+        CREATE TABLE tracked_instruments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            instrument_id INTEGER NOT NULL,
+            tracking_state TEXT NOT NULL CHECK (
+                tracking_state IN ('WATCHING', 'HOLDING', 'CLOSED', 'EXPIRED')
+            ),
+            recommended_at TEXT NOT NULL,
+            watch_expires_at TEXT,
+            source_recommendation_id TEXT,
+            latest_action TEXT,
+            latest_signal_at TEXT,
+            target_position REAL,
+            pending_cash_ratio REAL CHECK (
+                pending_cash_ratio IS NULL
+                OR pending_cash_ratio IN (0.10, 0.40, 0.50, 1.00)
+            ),
+            pending_sell_ratio REAL CHECK (
+                pending_sell_ratio IS NULL OR pending_sell_ratio IN (0.50, 1.00)
+            ),
+            reference_price REAL,
+            predicted_low REAL,
+            predicted_high REAL,
+            peak_hint TEXT,
+            processing_status TEXT NOT NULL DEFAULT 'PENDING' CHECK (
+                processing_status IN ('PENDING', 'CONFIRMED', 'IGNORED', 'SIGNALLED')
+            ),
+            raw_text TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (project_id) REFERENCES paper_projects(id),
+            FOREIGN KEY (instrument_id) REFERENCES instruments(id),
+            UNIQUE (project_id, instrument_id)
+        );
+
+        INSERT INTO tracked_instruments (
+            id, project_id, instrument_id, tracking_state, recommended_at,
+            watch_expires_at, source_recommendation_id, latest_action,
+            latest_signal_at, target_position, pending_cash_ratio,
+            pending_sell_ratio, reference_price, predicted_low, predicted_high,
+            peak_hint, processing_status, raw_text, created_at, updated_at
+        )
+        SELECT
+            id, project_id, instrument_id, tracking_state, recommended_at,
+            watch_expires_at, source_recommendation_id, latest_action,
+            latest_signal_at, target_position, pending_cash_ratio,
+            pending_sell_ratio, reference_price, predicted_low, predicted_high,
+            peak_hint, processing_status, raw_text, created_at, updated_at
+        FROM tracked_instruments_pre_buy_100;
+
+        DROP TABLE tracked_instruments_pre_buy_100;
+
+        CREATE INDEX IF NOT EXISTS idx_tracked_project_state
+            ON tracked_instruments(project_id, tracking_state, recommended_at);
+        """
+    )
+
+
 MIGRATIONS: tuple[tuple[int, str, Callable[[sqlite3.Connection], None]], ...] = (
     (1, "create_paper_schema", _create_current_schema),
     (2, "remove_manual_ledger_and_migrate_shadow_tables", _migrate_legacy_shadow_schema),
@@ -607,6 +676,7 @@ MIGRATIONS: tuple[tuple[int, str, Callable[[sqlite3.Connection], None]], ...] = 
     (7, "create_manual_theory_record_schema", _create_theory_record_schema),
     (8, "canonicalize_symbol_aliases", _canonicalize_symbol_aliases),
     (9, "create_tracking_operation_records", _create_tracking_operation_schema),
+    (10, "allow_full_pending_cash_ratio", _allow_full_pending_cash_ratio),
 )
 
 

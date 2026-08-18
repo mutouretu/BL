@@ -405,7 +405,7 @@ def portfolio_position_scenarios(project_id: int) -> dict:
         for row in positions
     }
     equity = cash + sum(market_values.values())
-    rates = (0.10, 0.40, 0.50)
+    rates = (0.10, 0.40, 0.50, 1.00)
     by_symbol = {}
     symbols = {
         row["symbol"]
@@ -438,8 +438,8 @@ def set_tracking_cash_allocation(
     """Set a pending buy action as a percentage of the remaining account cash."""
     normalized_symbol = _normalize_symbol(symbol)
     allocation = _validate_position(cash_allocation_ratio)
-    if allocation not in {0.10, 0.40, 0.50}:
-        raise ValueError("买入比例仅支持剩余资金的 10%、40% 或 50%。")
+    if allocation not in {0.10, 0.40, 0.50, 1.00}:
+        raise ValueError("买入比例仅支持剩余资金的 10%、40%、50% 或 100%。")
     scenarios = portfolio_position_scenarios(project_id)
     if scenarios["cash"] <= 0:
         raise ValueError("模拟账户没有可用现金。")

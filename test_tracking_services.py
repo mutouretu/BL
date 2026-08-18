@@ -43,7 +43,7 @@ class TrackingServicesTest(unittest.TestCase):
         self.assertTrue(
             {"instruments", "tracked_instruments", "signal_events"} <= tables
         )
-        self.assertEqual(versions, [1, 2, 3, 4, 5, 6, 7, 8, 9])
+        self.assertEqual(versions, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
 
     def test_symbol_alias_migration_normalizes_ss_to_sh(self) -> None:
         with db.get_connection() as conn:
@@ -180,6 +180,16 @@ class TrackingServicesTest(unittest.TestCase):
         self.assertEqual(row["processing_status"], "PENDING")
         self.assertEqual(result["cash_allocation_ratio"], 0.40)
         self.assertEqual(result["target_position"], 0.40)
+
+        full_result = tracking_services.set_pending_buy(
+            self.project_id, "000001.SZ", 1.00
+        )
+        full_row = tracking_services.list_tracking(
+            self.project_id, as_of="2026-08-06 12:00:00"
+        )[0]
+        self.assertEqual(full_row["pending_cash_ratio"], 1.00)
+        self.assertEqual(full_result["cash_allocation_ratio"], 1.00)
+        self.assertEqual(full_result["target_position"], 1.00)
 
         with self.assertRaisesRegex(ValueError, "仅支持"):
             tracking_services.set_tracking_cash_allocation(
