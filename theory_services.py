@@ -8,7 +8,7 @@ import db
 import paper_db
 
 
-DEFAULT_INITIAL_CASH = 100_000.0
+DEFAULT_INITIAL_CASH = 10_000_000.0
 BUY_RATIOS = {0.10, 0.40, 0.50, 1.00}
 SELL_RATIOS = {0.50, 1.00}
 
@@ -882,67 +882,164 @@ def available_months(project_id: int) -> list[str]:
     return [str(row["month"]) for row in rows]
 
 
-def monthly_statistics(project_id: int, month: str) -> dict:
+def _month_bounds(month: str) -> tuple[str, str]:
     if len(month) != 7 or month[4] != "-":
         raise ValueError("统计月份格式应为 YYYY-MM。")
-    account = account_summary(project_id)
-    positions = tracking_position_map(project_id)
-    rows = paper_db.rows(
+    try:
+        year = int(month[:4])
+        month_number = int(month[5:])
+        if not 1 <= month_number <= 12:
+            raise ValueError
+    except ValueError as exc:
+        raise ValueError("统计月份格式应为 YYYY-MM。") from exc
+    if month_number == 12:
+        next_month = f"{year + 1:04d}-01"
+    else:
+        next_month = f"{year:04d}-{month_number + 1:02d}"
+    return f"{month}-01 00:00:00", f"{next_month}-01 00:00:00"
+
+
+def _reference_price_at(conn, symbol: str, boundary: str) -> float:
+    row = conn.execute(
+        """
+        SELECT price
+        FROM (
+            SELECT price, price_time, id AS source_id
+            FROM theory_reference_prices
+            WHERE symbol = ? AND price_time < ?
+
+            UNION ALL
+
+            SELECT reference_price AS price, price_time, id AS source_id
+            FROM theory_trade_records
+            WHERE symbol = ? AND price_time < ?
+        ) prices
+        ORDER BY price_time DESC, source_id DESC
+        LIMIT 1
+        """,
+        (symbol, boundary, symbol, boundary),
+    ).fetchone()
+    return float(row["price"]) if row is not None else 0.0
+
+
+def _portfolio_snapshot(conn, account_id: int, boundary: str) -> dict:
+    account = conn.execute(
+        "SELECT initial_cash FROM theory_accounts WHERE id = ?",
+        (account_id,),
+    ).fetchone()
+    initial_cash = float(account["initial_cash"])
+    cash_change = conn.execute(
+        """
+        SELECT COALESCE(SUM(cash_change), 0) AS amount
+        FROM theory_trade_records
+        WHERE account_id = ? AND recorded_at < ?
+        """,
+        (account_id, boundary),
+    ).fetchone()
+    cash = initial_cash + float(cash_change["amount"])
+    quantity_rows = conn.execute(
         """
         SELECT
-            r.symbol,
-            COALESCE(i.name, r.symbol) AS name,
-            SUM(CASE WHEN r.side = 'BUY' THEN 1 ELSE 0 END) AS buy_count,
-            SUM(CASE WHEN r.side = 'BUY' THEN r.quantity ELSE 0 END) AS buy_quantity,
-            SUM(CASE WHEN r.side = 'BUY' THEN r.gross_amount ELSE 0 END) AS invested,
-            SUM(CASE WHEN r.side = 'SELL' THEN 1 ELSE 0 END) AS sell_count,
-            SUM(CASE WHEN r.side = 'SELL' THEN r.quantity ELSE 0 END) AS sell_quantity,
-            SUM(CASE WHEN r.side = 'SELL' THEN r.gross_amount ELSE 0 END) AS sold_amount,
-            SUM(r.realized_pnl) AS realized_pnl
-        FROM theory_trade_records r
-        LEFT JOIN instruments i ON i.symbol = r.symbol
-        WHERE r.project_id = ? AND substr(r.recorded_at, 1, 7) = ?
-        GROUP BY r.symbol
-        ORDER BY r.symbol
+            symbol,
+            SUM(CASE WHEN side = 'BUY' THEN quantity ELSE -quantity END) AS quantity
+        FROM theory_trade_records
+        WHERE account_id = ? AND recorded_at < ?
+        GROUP BY symbol
         """,
-        (project_id, month),
-    )
+        (account_id, boundary),
+    ).fetchall()
+    positions = {}
+    market_value = 0.0
+    for row in quantity_rows:
+        quantity = int(row["quantity"] or 0)
+        if quantity <= 0:
+            continue
+        price = _reference_price_at(conn, row["symbol"], boundary)
+        value = quantity * price
+        positions[row["symbol"]] = {
+            "quantity": quantity,
+            "price": price,
+            "market_value": value,
+        }
+        market_value += value
+    return {
+        "cash": cash,
+        "market_value": market_value,
+        "equity": cash + market_value,
+        "positions": positions,
+    }
+
+
+def monthly_statistics(project_id: int, month: str) -> dict:
+    month_start, next_month_start = _month_bounds(month)
+    account_id = ensure_account(project_id)
+    with db.get_connection() as conn:
+        account = _account_summary(conn, account_id)
+        opening = _portfolio_snapshot(conn, account_id, month_start)
+        closing = _portfolio_snapshot(conn, account_id, next_month_start)
+        rows = conn.execute(
+            """
+            SELECT
+                r.symbol,
+                COALESCE(i.name, r.symbol) AS name,
+                SUM(CASE WHEN r.side = 'BUY' THEN 1 ELSE 0 END) AS buy_count,
+                SUM(CASE WHEN r.side = 'BUY' THEN r.quantity ELSE 0 END) AS buy_quantity,
+                SUM(CASE WHEN r.side = 'BUY' THEN r.gross_amount ELSE 0 END) AS bought_amount,
+                SUM(CASE WHEN r.side = 'SELL' THEN 1 ELSE 0 END) AS sell_count,
+                SUM(CASE WHEN r.side = 'SELL' THEN r.quantity ELSE 0 END) AS sell_quantity,
+                SUM(CASE WHEN r.side = 'SELL' THEN r.gross_amount ELSE 0 END) AS sold_amount,
+                SUM(r.realized_pnl) AS realized_pnl
+            FROM theory_trade_records r
+            LEFT JOIN instruments i ON i.symbol = r.symbol
+            WHERE r.project_id = ?
+              AND r.recorded_at >= ? AND r.recorded_at < ?
+            GROUP BY r.symbol
+            ORDER BY r.symbol
+            """,
+            (project_id, month_start, next_month_start),
+        ).fetchall()
+
+    opening_capital = float(opening["equity"])
+    closing_capital = float(closing["equity"])
+    monthly_pnl = closing_capital - opening_capital
     details = []
     for row in rows:
-        position = positions.get(row["symbol"])
-        current_quantity = int(position["quantity"]) if position else 0
-        unrealized = float(position["unrealized_pnl"]) if position else 0.0
+        opening_position = opening["positions"].get(row["symbol"], {})
+        closing_position = closing["positions"].get(row["symbol"], {})
+        opening_value = float(opening_position.get("market_value", 0.0))
+        closing_value = float(closing_position.get("market_value", 0.0))
+        bought_amount = float(row["bought_amount"] or 0)
+        sold_amount = float(row["sold_amount"] or 0)
         realized = float(row["realized_pnl"] or 0)
-        invested = float(row["invested"] or 0)
-        total_pnl = realized + unrealized
+        total_pnl = closing_value - opening_value - bought_amount + sold_amount
+        unrealized_change = total_pnl - realized
+        closing_quantity = int(closing_position.get("quantity", 0))
         details.append(
             {
                 "股票代码": row["symbol"],
                 "股票名称": row["name"],
                 "买入次数": int(row["buy_count"] or 0),
                 "买入股数": int(row["buy_quantity"] or 0),
-                "累计投入": invested,
-                "当前仓位": float(position["position_pct"]) if position else 0.0,
+                "月末仓位": closing_value / closing_capital if closing_capital else 0.0,
                 "卖出次数": int(row["sell_count"] or 0),
                 "卖出股数": int(row["sell_quantity"] or 0),
-                "卖出金额": float(row["sold_amount"] or 0),
+                "卖出金额": sold_amount,
                 "已实现盈亏": realized,
-                "未实现盈亏": unrealized,
-                "总盈亏": total_pnl,
-                "收益率": total_pnl / invested if invested else None,
-                "当前状态": "持仓中" if current_quantity > 0 else "已清仓",
+                "未实现盈亏变动": unrealized_change,
+                "本月盈亏": total_pnl,
+                "收益率": total_pnl / opening_capital if opening_capital else None,
+                "月末状态": "持仓中" if closing_quantity > 0 else "已清仓",
             }
         )
-    total_invested = sum(row["累计投入"] for row in details)
-    total_pnl = sum(row["总盈亏"] for row in details)
     return {
         "month": month,
         "details": details,
         "stock_count": len(details),
         "buy_count": sum(row["买入次数"] for row in details),
         "sell_count": sum(row["卖出次数"] for row in details),
-        "invested": total_invested,
-        "pnl": total_pnl,
-        "return_rate": total_pnl / total_invested if total_invested else None,
+        "opening_capital": opening_capital,
+        "closing_capital": closing_capital,
+        "pnl": monthly_pnl,
+        "return_rate": monthly_pnl / opening_capital if opening_capital else None,
         "account": account,
     }

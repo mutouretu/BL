@@ -951,79 +951,6 @@ def simulation_ledger_page() -> None:
             st.dataframe(fills, width="stretch", hide_index=True)
 
 
-def monthly_trade_statistics_sample_rows() -> list[dict]:
-    return [
-        {
-            "月份": "2026-08",
-            "股票代码": "300377.SZ",
-            "股票名称": "赢时胜",
-            "买入次数": 2,
-            "买入股数": 2100,
-            "累计投入": 29384.69,
-            "当前仓位": 0.144,
-            "卖出次数": 1,
-            "卖出股数": 1100,
-            "卖出金额": 15997.00,
-            "已实现盈亏": 586.78,
-            "未实现盈亏": 612.53,
-            "总盈亏": 1199.31,
-            "收益率": 0.0408,
-            "当前状态": "持仓中",
-        },
-        {
-            "月份": "2026-08",
-            "股票代码": "300083.SZ",
-            "股票名称": "创世纪",
-            "买入次数": 1,
-            "买入股数": 900,
-            "累计投入": 11885.94,
-            "当前仓位": 0.0,
-            "卖出次数": 1,
-            "卖出股数": 900,
-            "卖出金额": 12638.68,
-            "已实现盈亏": 736.42,
-            "未实现盈亏": 0.0,
-            "总盈亏": 736.42,
-            "收益率": 0.0619,
-            "当前状态": "已清仓",
-        },
-        {
-            "月份": "2026-08",
-            "股票代码": "300142.SZ",
-            "股票名称": "沃森生物",
-            "买入次数": 1,
-            "买入股数": 900,
-            "累计投入": 11255.63,
-            "当前仓位": 0.059,
-            "卖出次数": 1,
-            "卖出股数": 400,
-            "卖出金额": 4837.58,
-            "已实现盈亏": -174.56,
-            "未实现盈亏": -235.90,
-            "总盈亏": -410.46,
-            "收益率": -0.0365,
-            "当前状态": "持仓中",
-        },
-        {
-            "月份": "2026-08",
-            "股票代码": "300760.SZ",
-            "股票名称": "迈瑞医疗",
-            "买入次数": 1,
-            "买入股数": 100,
-            "累计投入": 22511.25,
-            "当前仓位": 0.223,
-            "卖出次数": 0,
-            "卖出股数": 0,
-            "卖出金额": 0.0,
-            "已实现盈亏": 0.0,
-            "未实现盈亏": 222.00,
-            "总盈亏": 222.00,
-            "收益率": 0.0099,
-            "当前状态": "持仓中",
-        },
-    ]
-
-
 def trade_profit_style(value: object) -> str:
     try:
         numeric = float(value)
@@ -1039,8 +966,8 @@ def trade_profit_style(value: object) -> str:
 def monthly_trade_statistics_page() -> None:
     project_id, _ = ensure_demo()
     st.markdown(
-        '<div class="beili-note">按月汇总理论操作记录和当前理论持仓，'
-        "作为业务方复盘实际操盘结果时使用的理论收益基准。</div>",
+        '<div class="beili-note">按月汇总理论操作和持仓市值，资金池按月滚动：'
+        "本月期末总资金将作为下月期初资金。</div>",
         unsafe_allow_html=True,
     )
     months = theory_services.available_months(project_id)
@@ -1055,10 +982,11 @@ def monthly_trade_statistics_page() -> None:
     first_row[0].metric("交易股数", f"{statistics['stock_count']} 只")
     first_row[1].metric("买入次数", f"{statistics['buy_count']} 次")
     first_row[2].metric("卖出次数", f"{statistics['sell_count']} 次")
-    second_row = st.columns(3)
-    second_row[0].metric("累计投入", money(statistics["invested"]))
-    second_row[1].metric("理论盈亏", money(statistics["pnl"]))
-    second_row[2].metric("理论收益率", pct(statistics["return_rate"]))
+    second_row = st.columns(4)
+    second_row[0].metric("期初资金池", money(statistics["opening_capital"]))
+    second_row[1].metric("本月盈亏", money(statistics["pnl"]))
+    second_row[2].metric("期末总资金", money(statistics["closing_capital"]))
+    second_row[3].metric("本月收益率", pct(statistics["return_rate"]))
 
     st.markdown(
         '<div class="beili-book-heading"><span class="beili-book-badge paper">'
@@ -1069,21 +997,20 @@ def monthly_trade_statistics_page() -> None:
         "股票代码",
         "股票名称",
         "买入次数",
-        "累计投入",
-        "当前仓位",
+        "月末仓位",
         "卖出次数",
         "卖出金额",
         "已实现盈亏",
-        "未实现盈亏",
-        "总盈亏",
+        "未实现盈亏变动",
+        "本月盈亏",
         "收益率",
-        "当前状态",
+        "月末状态",
     ]
     styled = (
         monthly[visible_columns]
         .style.map(
             trade_profit_style,
-            subset=["已实现盈亏", "未实现盈亏", "总盈亏", "收益率"],
+            subset=["已实现盈亏", "未实现盈亏变动", "本月盈亏", "收益率"],
         )
     )
     st.dataframe(
@@ -1094,20 +1021,19 @@ def monthly_trade_statistics_page() -> None:
             "股票代码": st.column_config.TextColumn(width="medium"),
             "股票名称": st.column_config.TextColumn(width="small"),
             "买入次数": st.column_config.NumberColumn(format="%d", width="small"),
-            "累计投入": st.column_config.NumberColumn(format="¥%.2f", width="medium"),
-            "当前仓位": st.column_config.NumberColumn(format="percent", width="small"),
+            "月末仓位": st.column_config.NumberColumn(format="percent", width="small"),
             "卖出次数": st.column_config.NumberColumn(format="%d", width="small"),
             "卖出金额": st.column_config.NumberColumn(format="¥%.2f", width="medium"),
             "已实现盈亏": st.column_config.NumberColumn(format="¥%.2f", width="medium"),
-            "未实现盈亏": st.column_config.NumberColumn(format="¥%.2f", width="medium"),
-            "总盈亏": st.column_config.NumberColumn(format="¥%.2f", width="medium"),
-            "收益率": st.column_config.NumberColumn(format="%.2%%", width="small"),
-            "当前状态": st.column_config.TextColumn(width="small"),
+            "未实现盈亏变动": st.column_config.NumberColumn(format="¥%.2f", width="medium"),
+            "本月盈亏": st.column_config.NumberColumn(format="¥%.2f", width="medium"),
+            "收益率": st.column_config.NumberColumn(format="percent", width="small"),
+            "月末状态": st.column_config.TextColumn(width="small"),
         },
     )
     st.caption(
         f"{selected_month} 共 {len(monthly)} 只股票产生理论操作记录 · "
-        "当前仓位和未实现盈亏按最新参考价格计算"
+        "本月收益率 = 本月盈亏 ÷ 期初资金池 · 期末总资金自动滚入下月"
     )
 
 

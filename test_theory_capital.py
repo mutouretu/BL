@@ -19,7 +19,7 @@ class TheoryCapitalTest(unittest.TestCase):
         db.DB_PATH = Path(self.tmp.name) / "capital.sqlite3"
         paper_db.migrate()
         self.project_id, _ = paper_services.create_demo_project()
-        theory_services.ensure_account(self.project_id)
+        theory_services.ensure_account(self.project_id, initial_cash=100_000)
         tracking_services.add_watching(
             self.project_id,
             "300377.SZ",

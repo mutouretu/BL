@@ -19,7 +19,7 @@ class TheoryServicesTest(unittest.TestCase):
         db.DB_PATH = Path(self.tmp.name) / "theory.sqlite3"
         paper_db.migrate()
         self.project_id, _ = paper_services.create_demo_project()
-        theory_services.ensure_account(self.project_id)
+        theory_services.ensure_account(self.project_id, initial_cash=100_000)
         tracking_services.add_watching(
             self.project_id,
             "300377.SZ",
@@ -65,6 +65,22 @@ class TheoryServicesTest(unittest.TestCase):
         self.assertEqual(history[0]["allocation_ratio"], 0.10)
         with self.assertRaisesRegex(ValueError, "仍有理论持仓"):
             tracking_services.archive_tracking(self.project_id, "300377.SZ")
+
+    def test_new_theory_account_defaults_to_ten_million(self) -> None:
+        with db.get_connection() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO paper_projects (name, market, created_at)
+                VALUES ('第二个测试项目', 'A股', '2026-08-03 09:00:00')
+                """
+            )
+            project_id = int(cursor.lastrowid)
+
+        theory_services.ensure_account(project_id)
+        summary = theory_services.account_summary(project_id)
+
+        self.assertEqual(summary["initial_cash"], 10_000_000)
+        self.assertEqual(summary["equity"], 10_000_000)
 
     def test_operation_history_includes_watch_with_empty_trade_details(self) -> None:
         history = theory_services.operation_history(
@@ -277,6 +293,44 @@ class TheoryServicesTest(unittest.TestCase):
         self.assertEqual(result["sell_count"], 1)
         self.assertEqual(result["details"][0]["买入股数"], 1000)
         self.assertEqual(result["details"][0]["卖出股数"], 500)
+        self.assertEqual(result["opening_capital"], 100_000)
+        self.assertEqual(result["pnl"], 1_000)
+        self.assertEqual(result["closing_capital"], 101_000)
+        self.assertEqual(result["return_rate"], 0.01)
+        self.assertNotIn("累计投入", result["details"][0])
+
+    def test_monthly_capital_pool_rolls_into_next_month(self) -> None:
+        theory_services.create_record(
+            self.project_id,
+            "300377.SZ",
+            "BUY",
+            0.10,
+            recorded_at="2026-08-03 10:00:00",
+        )
+        theory_services.upsert_reference_price(
+            "300377.SZ",
+            11.0,
+            price_time="2026-08-31 15:00:00",
+            source="月末价",
+        )
+        august = theory_services.monthly_statistics(self.project_id, "2026-08")
+
+        theory_services.create_record(
+            self.project_id,
+            "300377.SZ",
+            "SELL",
+            1.00,
+            recorded_at="2026-09-02 10:00:00",
+            reference_price=12.0,
+        )
+        september = theory_services.monthly_statistics(self.project_id, "2026-09")
+
+        self.assertEqual(august["opening_capital"], 100_000)
+        self.assertEqual(august["closing_capital"], 101_000)
+        self.assertEqual(september["opening_capital"], 101_000)
+        self.assertEqual(september["pnl"], 1_000)
+        self.assertEqual(september["closing_capital"], 102_000)
+        self.assertAlmostEqual(september["return_rate"], 1_000 / 101_000)
 
     def test_demo_fixture_is_idempotent(self) -> None:
         other_tmp = tempfile.TemporaryDirectory()
