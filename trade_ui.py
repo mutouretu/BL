@@ -716,19 +716,19 @@ def operation_history_page() -> None:
     frame = pd.DataFrame(rows)
     styled = frame.style.map(recommendation_action_style, subset=["操作"])
     column_config = {
-        "记录时间": st.column_config.TextColumn(width="medium"),
-        "操作": st.column_config.TextColumn(width="small"),
-        "买卖比例": st.column_config.NumberColumn(format="%.1f%%", width="small"),
-        "总仓占比": st.column_config.NumberColumn(format="%.1f%%", width="small"),
-        "成交价格": st.column_config.NumberColumn(format="%.2f", width="small"),
-        "理论数量": st.column_config.NumberColumn(format="%.0f", width="small"),
-        "理论金额": st.column_config.NumberColumn(format="¥ %.2f", width="medium"),
-        "资金变动": st.column_config.NumberColumn(format="¥ %.2f", width="medium"),
+        "记录时间": st.column_config.TextColumn(width=142),
+        "操作": st.column_config.TextColumn(width=68),
+        "买卖比例": st.column_config.NumberColumn(format="%.1f%%", width=78),
+        "总仓占比": st.column_config.NumberColumn(format="%.1f%%", width=78),
+        "成交价格": st.column_config.NumberColumn(format="%.2f", width=82),
+        "理论数量": st.column_config.NumberColumn(format="%.0f", width=86),
+        "理论金额": st.column_config.NumberColumn(format="¥ %.2f", width=112),
+        "资金变动": st.column_config.NumberColumn(format="¥ %.2f", width=112),
     }
     if show_stock_columns:
         column_config = {
-            "股票代码": st.column_config.TextColumn(width="medium", pinned=True),
-            "股票名称": st.column_config.TextColumn(width="small"),
+            "股票代码": st.column_config.TextColumn(width=104, pinned=True),
+            "股票名称": st.column_config.TextColumn(width=92),
             **column_config,
         }
     st.dataframe(
@@ -1030,17 +1030,17 @@ def monthly_trade_statistics_page() -> None:
         width="stretch",
         hide_index=True,
         column_config={
-            "股票代码": st.column_config.TextColumn(width="medium"),
-            "股票名称": st.column_config.TextColumn(width="small"),
-            "买入次数": st.column_config.NumberColumn(format="%d", width="small"),
-            "月末仓位": st.column_config.NumberColumn(format="percent", width="small"),
-            "卖出次数": st.column_config.NumberColumn(format="%d", width="small"),
-            "卖出金额": st.column_config.NumberColumn(format="¥%.2f", width="medium"),
-            "已实现盈亏": st.column_config.NumberColumn(format="¥%.2f", width="medium"),
-            "未实现盈亏变动": st.column_config.NumberColumn(format="¥%.2f", width="medium"),
-            "本月盈亏": st.column_config.NumberColumn(format="¥%.2f", width="medium"),
-            "收益率": st.column_config.NumberColumn(format="percent", width="small"),
-            "月末状态": st.column_config.TextColumn(width="small"),
+            "股票代码": st.column_config.TextColumn(width=104),
+            "股票名称": st.column_config.TextColumn(width=92),
+            "买入次数": st.column_config.NumberColumn(format="%d", width=72),
+            "月末仓位": st.column_config.NumberColumn(format="percent", width=78),
+            "卖出次数": st.column_config.NumberColumn(format="%d", width=72),
+            "卖出金额": st.column_config.NumberColumn(format="¥%.2f", width=104),
+            "已实现盈亏": st.column_config.NumberColumn(format="¥%.2f", width=108),
+            "未实现盈亏变动": st.column_config.NumberColumn(format="¥%.2f", width=130),
+            "本月盈亏": st.column_config.NumberColumn(format="¥%.2f", width=108),
+            "收益率": st.column_config.NumberColumn(format="percent", width=74),
+            "月末状态": st.column_config.TextColumn(width=82),
         },
     )
     st.caption(
