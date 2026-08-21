@@ -219,6 +219,95 @@ class TheoryServicesTest(unittest.TestCase):
         self.assertEqual(history[0]["realized_pnl"], 500)
         self.assertEqual(positions[0]["quantity"], 500)
 
+    def test_position_uses_latest_trade_when_reference_quote_is_missing(self) -> None:
+        theory_services.create_record(
+            self.project_id,
+            "300377.SZ",
+            "BUY",
+            0.10,
+            recorded_at="2026-08-03 10:00:00",
+            reference_price=12.34,
+        )
+        with db.get_connection() as conn:
+            conn.execute(
+                "DELETE FROM theory_reference_prices WHERE symbol = '300377.SZ'"
+            )
+            conn.execute(
+                """
+                UPDATE tracked_instruments
+                SET reference_price = NULL
+                WHERE instrument_id = (
+                    SELECT id FROM instruments WHERE symbol = '300377.SZ'
+                )
+                """
+            )
+
+        position = theory_services.position_rows(self.project_id)[0]
+
+        self.assertEqual(position["reference_price"], 12.34)
+        self.assertEqual(position["price_source"], "最近理论成交价")
+        self.assertFalse(position["price_missing"])
+
+    def test_zero_position_without_quote_is_excluded_from_current_positions(self) -> None:
+        theory_services.create_record(
+            self.project_id,
+            "300377.SZ",
+            "BUY",
+            0.10,
+            recorded_at="2026-08-03 10:00:00",
+        )
+        theory_services.create_record(
+            self.project_id,
+            "300377.SZ",
+            "SELL",
+            1.00,
+            recorded_at="2026-08-04 10:00:00",
+            reference_price=11.0,
+        )
+        with db.get_connection() as conn:
+            conn.execute(
+                "DELETE FROM theory_reference_prices WHERE symbol = '300377.SZ'"
+            )
+            conn.execute(
+                """
+                UPDATE tracked_instruments
+                SET reference_price = NULL
+                WHERE instrument_id = (
+                    SELECT id FROM instruments WHERE symbol = '300377.SZ'
+                )
+                """
+            )
+
+        self.assertEqual(theory_services.position_rows(self.project_id), [])
+
+    def test_missing_quote_on_open_position_does_not_break_account_view(self) -> None:
+        tracking_services.add_watching(
+            self.project_id,
+            "300142.SZ",
+            "沃森生物",
+            "2026-08-04 09:30:00",
+        )
+        account_id = theory_services.ensure_account(self.project_id)
+        with db.get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO theory_positions (
+                    account_id, symbol, quantity, cost_total,
+                    realized_pnl, updated_at
+                ) VALUES (?, '300142.SZ', 100, 0, 0, '2026-08-04 10:00:00')
+                """,
+                (account_id,),
+            )
+
+        summary = theory_services.account_summary(self.project_id)
+        positions = theory_services.position_rows(self.project_id)
+
+        self.assertEqual(summary["equity"], 100_000)
+        missing = next(row for row in positions if row["symbol"] == "300142.SZ")
+        self.assertIsNone(missing["reference_price"])
+        self.assertEqual(missing["price_source"], "缺少参考行情")
+        self.assertTrue(missing["price_missing"])
+
     def test_zero_position_can_be_deleted_with_trade_history_preserved(self) -> None:
         theory_services.create_record(
             self.project_id,

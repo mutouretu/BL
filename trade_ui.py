@@ -539,6 +539,18 @@ def daily_recommendations_page() -> None:
     summary = tracking_services.tracking_summary(project_id)
     account = theory_services.account_summary(project_id)
     position_details = theory_services.tracking_position_map(project_id)
+    missing_price_symbols = [
+        symbol
+        for symbol, position in position_details.items()
+        if position.get("price_missing")
+    ]
+    if missing_price_symbols:
+        st.warning(
+            "以下持仓缺少有效参考行情，当前暂未计入持仓市值："
+            + "、".join(missing_price_symbols)
+            + "。请点击表格右上方的刷新价格按钮。",
+            icon=":material/warning:",
+        )
 
     display_rows = []
     for row in rows:

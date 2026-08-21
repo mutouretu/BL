@@ -133,7 +133,7 @@ def _latest_price(conn, symbol: str, fallback: float = 0.0) -> dict:
         """
         SELECT price, price_time, source
         FROM theory_reference_prices
-        WHERE symbol = ?
+        WHERE symbol = ? AND price > 0
         ORDER BY price_time DESC, id DESC
         LIMIT 1
         """,
@@ -146,7 +146,7 @@ def _latest_price(conn, symbol: str, fallback: float = 0.0) -> dict:
         SELECT close AS price, trade_date || ' 15:00:00' AS price_time,
                '本地日行情' AS source
         FROM paper_market_daily
-        WHERE symbol = ? AND close IS NOT NULL
+        WHERE symbol = ? AND close > 0
         ORDER BY trade_date DESC, id DESC
         LIMIT 1
         """,
@@ -160,8 +160,21 @@ def _latest_price(conn, symbol: str, fallback: float = 0.0) -> dict:
                '当前跟踪参考价' AS source
         FROM tracked_instruments t
         JOIN instruments i ON i.id = t.instrument_id
-        WHERE i.symbol = ? AND t.reference_price IS NOT NULL
+        WHERE i.symbol = ? AND t.reference_price > 0
         ORDER BY t.updated_at DESC
+        LIMIT 1
+        """,
+        (symbol,),
+    ).fetchone()
+    if row is not None:
+        return dict(row)
+    row = conn.execute(
+        """
+        SELECT reference_price AS price, price_time,
+               '最近理论成交价' AS source
+        FROM theory_trade_records
+        WHERE symbol = ? AND reference_price > 0
+        ORDER BY price_time DESC, id DESC
         LIMIT 1
         """,
         (symbol,),
@@ -171,6 +184,23 @@ def _latest_price(conn, symbol: str, fallback: float = 0.0) -> dict:
     if fallback > 0:
         return {"price": fallback, "price_time": now_iso(), "source": "持仓成本"}
     raise ValueError(f"{symbol} 暂无有效参考价格，请先刷新或录入参考行情。")
+
+
+def _position_price(conn, symbol: str, quantity: int, cost_total: float) -> dict:
+    """Return a best-effort position mark without breaking account-wide views."""
+    average_cost = cost_total / quantity if quantity > 0 and cost_total > 0 else 0.0
+    try:
+        return {
+            **_latest_price(conn, symbol, average_cost),
+            "is_missing": False,
+        }
+    except ValueError:
+        return {
+            "price": 0.0,
+            "price_time": None,
+            "source": "缺少参考行情",
+            "is_missing": True,
+        }
 
 
 def _account_summary(conn, account_id: int) -> dict:
@@ -196,7 +226,9 @@ def _account_summary(conn, account_id: int) -> dict:
         realized += float(position["realized_pnl"])
         if quantity <= 0:
             continue
-        mark = float(_latest_price(conn, position["symbol"], cost_total / quantity)["price"])
+        mark = float(
+            _position_price(conn, position["symbol"], quantity, cost_total)["price"]
+        )
         market_value += quantity * mark
         unrealized += quantity * mark - cost_total
     cash = float(account["cash_balance"])
@@ -582,7 +614,7 @@ def position_rows(project_id: int) -> list[dict]:
             SELECT p.symbol, i.name, p.quantity, p.cost_total, p.realized_pnl
             FROM theory_positions p
             LEFT JOIN instruments i ON i.symbol = p.symbol
-            WHERE p.account_id = ?
+            WHERE p.account_id = ? AND p.quantity > 0
             ORDER BY p.symbol
             """,
             (account_id,),
@@ -591,10 +623,8 @@ def position_rows(project_id: int) -> list[dict]:
         for position in positions:
             quantity = int(position["quantity"])
             cost_total = float(position["cost_total"])
-            price_row = _latest_price(
-                conn,
-                position["symbol"],
-                cost_total / quantity if quantity else 0,
+            price_row = _position_price(
+                conn, position["symbol"], quantity, cost_total
             )
             mark = float(price_row["price"])
             market_value = quantity * mark
@@ -605,7 +635,9 @@ def position_rows(project_id: int) -> list[dict]:
                     "quantity": quantity,
                     "available_quantity": quantity,
                     "average_cost": cost_total / quantity if quantity else None,
-                    "reference_price": mark,
+                    "reference_price": None if price_row["is_missing"] else mark,
+                    "price_source": price_row["source"],
+                    "price_missing": price_row["is_missing"],
                     "market_value": market_value,
                     "position_pct": market_value / summary["equity"] if summary["equity"] else 0,
                     "unrealized_pnl": market_value - cost_total,
